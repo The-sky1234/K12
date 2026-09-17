@@ -1,0 +1,30 @@
+{
+  "defaultModel": "",
+  "presets": [
+    {
+      "id": "",
+      "label": "系统默认模型（推荐）",
+      "desc": "由 AgentOS/Core 自动选择当前已配置且可用的默认模型，兼容性最高"
+    },
+    {
+      "id": "deepseek/deepseek-chat",
+      "label": "DeepSeek Chat（直连/网关）",
+      "desc": "配置有效 DeepSeek Key 时优先直连；否则尝试宿主网关"
+    },
+    {
+      "id": "google/gemini-flash",
+      "label": "Gemini Flash（备用）",
+      "desc": "配置 Gemini Key 或宿主提供该模型时使用"
+    }
+  ],
+  "providers": {
+    "deepseek": {
+      "base": "https://api.deepseek.com/chat/completions",
+      "model": "deepseek-chat"
+    },
+    "gemini": {
+      "model": "gemini-2.0-flash"
+    }
+  },
+  "note": "此文件随插件zip分发、可被静态访问，只放模型名绝不放Key。真Key只放在服务端数据目录 models-secrets.json（见 models-secrets.example.json），仅 server.js 可读。"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "k12-ai-lesson-prep",
+  "displayName": "中小学AI备课系统",
+  "version": "1.2.5",
+  "backendApiVersion": 2,
+  "description": "教师AI辅助备课与教导教研审核闭环：模型多通道自动兜底、系统默认模型优先兼容、直连重试与诊断增强",
+  "type": "full-page",
+  "entry": "index.js",
+  "icon": "icon.svg",
+  "navigation": {
+    "region": "left-sidebar",
+    "order": 21
+  },
+  "events": {
+    "emits": [
+      "plugin:k12-ai-lesson-prep:ready",
+      "plugin:k12-ai-lesson-prep:doc-updated"
+    ],
+    "listens": [
+      "core:started"
+    ]
+  }
+}
