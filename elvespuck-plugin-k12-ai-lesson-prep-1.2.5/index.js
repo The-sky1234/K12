@@ -36,6 +36,28 @@ const CSS = `
 .k12-stat{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
 .k12-stat .k12-card{min-width:130px;flex:1;text-align:center}
 .k12-num{font-size:22px;font-weight:800}
+.k12-shell{display:grid;grid-template-columns:210px minmax(0,1fr);gap:16px;align-items:start}
+.k12-sidebar{background:var(--sys-color-bg-surface);border:1px solid var(--sys-color-border-main);border-radius:12px;padding:10px;position:sticky;top:16px}
+.k12-nav-title{font-size:12px;color:var(--sys-color-text-secondary);padding:8px 10px 6px}
+.k12-nav{display:flex;flex-direction:column;gap:4px}
+.k12-nav-btn{border:0;background:transparent;color:var(--sys-color-text-primary);border-radius:8px;padding:10px;text-align:left;cursor:pointer;font-size:13px}
+.k12-nav-btn:hover{background:var(--sys-color-bg-subtle)}
+.k12-nav-btn.on{background:var(--sys-color-primary);color:#fff;font-weight:700}
+.k12-nav-btn.disabled{color:var(--sys-color-text-secondary);cursor:default}
+.k12-role-badge{margin:14px 8px 4px;padding:6px 8px;border-radius:6px;background:var(--sys-color-bg-subtle);color:var(--sys-color-text-secondary);font-size:12px}
+.k12-main{min-width:0}
+.k12-hero{background:linear-gradient(135deg,var(--sys-color-primary),#4f7cff);color:#fff;border-radius:14px;padding:20px;margin-bottom:12px}
+.k12-hero h2{margin:0 0 6px;font-size:22px}
+.k12-hero p{margin:0;opacity:.88;font-size:13px;line-height:1.7}
+.k12-overview{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin:12px 0}
+.k12-overview .k12-card{text-align:left}
+.k12-overview .k12-meta{margin-bottom:4px}
+.k12-section-title{font-size:15px;font-weight:800;margin:18px 0 8px}
+.k12-module-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.k12-module{cursor:pointer;transition:transform .15s,border-color .15s}
+.k12-module:hover{transform:translateY(-2px);border-color:var(--sys-color-primary)}
+.k12-module strong{display:block;margin-bottom:5px}
+@media (max-width:760px){.k12-shell{display:block}.k12-sidebar{position:static;margin-bottom:12px}.k12-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.k12-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.k12-module-grid{grid-template-columns:1fr}}
 :root[data-theme='dark'] .k12-input,:root[data-theme='dark'] .k12-select,:root[data-theme='dark'] .k12-area{background:var(--sys-color-bg-subtle)}
 `
 
@@ -47,7 +69,7 @@ export default {
   inject: ['pluginApi', 'vueH'],
   data() {
     return {
-      tab: 'teacher',
+      tab: 'home',
       actor: '张老师',
       role: '任课教师',
       loading: false,
@@ -65,6 +87,7 @@ export default {
       // teacher docs
       myDocs: [],
       docQuery: '',
+      docFilter: 'all',
       selectedDocId: '',
       selectedDoc: null,
       editContent: {},
@@ -96,8 +119,7 @@ export default {
       if (a) this.actor = a
       const r = await this.pluginApi.storage.get('role')
       if (r === '教导教研' || r === '任课教师') this.role = r
-      // 页面完全按角色隔离，不再恢复旧tab：老师只进备课，教导只进审核
-      this.tab = this.role === '教导教研' ? 'audit' : 'teacher'
+      this.tab = 'home'
       try { await this.pluginApi.storage.set('tab', this.tab) } catch {}
     } catch {}
     this.pluginApi.eventBus.emit('plugin:k12-ai-lesson-prep:ready', { at: new Date().toISOString() })
@@ -144,13 +166,9 @@ export default {
       } catch (e) { this.pluginApi.showToast(e.message, 'error') } finally { this.loading = false }
     },
     async switchTab(t) {
-      // 页面与角色强绑定：任课教师只能在老师页，教导教研只能在审核页
-      if (this.role === '任课教师' && t !== 'teacher') {
-        this.pluginApi.showToast('当前为任课教师，只能使用老师备课页', 'warning')
-        return
-      }
-      if (this.role === '教导教研' && t !== 'audit') {
-        this.pluginApi.showToast('当前为教导教研，只能使用审核页', 'warning')
+      const allowed = this.role === '教导教研' ? ['home', 'audit', 'stats'] : ['home', 'ai', 'docs', 'resources', 'collab']
+      if (!allowed.includes(t)) {
+        this.pluginApi.showToast('当前身份暂无该模块权限', 'warning')
         return
       }
       this.tab = t
@@ -160,8 +178,7 @@ export default {
     async onRoleChange(v) {
       this.role = v
       try { await this.pluginApi.storage.set('role', v) } catch {}
-      // 切换角色即切换页面：老师只会有备课，教导只会有审核
-      this.tab = v === '教导教研' ? 'audit' : 'teacher'
+      this.tab = 'home'
       try { await this.pluginApi.storage.set('tab', this.tab) } catch {}
       this.pluginApi.showToast(v === '教导教研' ? '已切换为教导教研审核页' : '已切换为老师备课页', 'info')
       await this.refreshAll()
@@ -253,10 +270,21 @@ export default {
       } catch (e) { this.pluginApi.showToast(e.message, 'error') } finally { this.loading = false }
     },
     // ---------- 老师：文档 ----------
+    myDocsByStatus(status) {
+      return (this.myDocs || []).filter(d => {
+        const s = d.review?.status || 'draft'
+        if (status === 'draft') return s === 'draft'
+        if (status === 'submitted') return s === 'submitted'
+        if (status === 'approved') return s === 'approved' || d.status === '定稿'
+        if (status === 'rejected') return s === 'rejected'
+        return true
+      })
+    },
     filteredMyDocs() {
       const kw = this.docQuery.trim().toLowerCase()
-      if (!kw) return this.myDocs
-      return this.myDocs.filter(d => `${d.title}${d.subject}${d.grade}${d.status}${REVIEW_LABEL[d.review?.status] || ''}`.toLowerCase().includes(kw))
+      let list = this.myDocsByStatus(this.docFilter)
+      if (!kw) return list
+      return list.filter(d => `${d.title}${d.subject}${d.grade}${d.status}${REVIEW_LABEL[d.review?.status] || ''}`.toLowerCase().includes(kw))
     },
     async openDoc(id, silent) {
       try {
@@ -370,6 +398,9 @@ export default {
     const area = (val, onInput, placeholder, rows) => el('textarea', { class: 'k12-area', value: val, placeholder: placeholder || '', rows: rows || 4, onInput: e => onInput(e.target.value) })
     const tag = (t, cls) => el('span', { class: 'k12-tag' + (cls ? ' ' + cls : '') }, t)
 
+    const navItem = (id, label) => el('button', { class: 'k12-nav-btn' + (this.tab === id ? ' on' : ''), onClick: () => this.switchTab(id) }, label)
+    const isAuditRole = this.role === '教导教研'
+    const roleTitle = isAuditRole ? '教研管理工作台' : '教师备课工作台'
     const header = el('div', { class: 'k12-top' }, [
       el('div', { style: 'flex:1;min-width:220px' }, [
         el('div', { class: 'k12-title' }, 'AI备课 · 教导审核'),
@@ -381,7 +412,6 @@ export default {
       btn(this.loading ? '加载中…' : '刷新', () => this.refreshAll(), 'ghost', this.loading)
     ])
 
-    const isAuditRole = this.role === '教导教研'
     const steps = isAuditRole
       ? el('div', { class: 'k12-steps' }, [
         el('span', { class: 'k12-step on' }, '教导教研审核'),
@@ -398,24 +428,53 @@ export default {
         el('span', { class: 'k12-step on' }, '3 提交教导审核')
       ])
 
-    // 角色决定可见页面：老师只会有备课，教导只会有审核，不再同时展示两个tab
-    const tabs = this.role === '教导教研'
-      ? el('div', { class: 'k12-tabs' }, [
-        el('button', { class: 'k12-tab on', onClick: () => this.switchTab('audit') }, `教导教研审核${this.auditStats?.submitted ? `（${this.auditStats.submitted}待审）` : ''}`)
-      ])
-      : el('div', { class: 'k12-tabs' }, [
-        el('button', { class: 'k12-tab on', onClick: () => this.switchTab('teacher') }, '老师用AI备课')
-      ])
+    const menu = isAuditRole ? [
+      ['home', '首页 / 工作台'],
+      ['audit', `教研审核${this.auditStats?.submitted ? `（${this.auditStats.submitted}）` : ''}`],
+      ['stats', '数据台账']
+    ] : [
+      ['home', '首页 / 工作台'],
+      ['ai', 'AI 智能备课'],
+      ['docs', '我的备课'],
+      ['resources', '校本资源库'],
+      ['collab', '集体备课']
+    ]
+    if (!menu.some(([id]) => id === this.tab)) this.tab = 'home'
+    const sidebar = el('aside', { class: 'k12-sidebar' }, [
+      el('div', { class: 'k12-nav-title' }, roleTitle),
+      el('div', { class: 'k12-nav' }, menu.map(([id, label]) => navItem(id, label))),
+      el('div', { class: 'k12-role-badge' }, isAuditRole ? '教导教研 · 只看审核与台账' : '任课教师 · 只看备课与资源')
+    ])
 
     let body = null
 
-    // 页面与角色强绑定：教导只渲染审核，老师只渲染备课
-    if (this.tab === 'audit' && !isAuditRole) this.tab = 'teacher'
-    if (this.tab === 'teacher' && isAuditRole) this.tab = 'audit'
-
-    if (this.tab === 'teacher') {
+    if (this.tab === 'home') {
+      const pending = this.auditStats?.submitted || 0
+      const overview = isAuditRole
+        ? [
+          ['待审核', pending],
+          ['已通过', this.auditStats?.approved || 0],
+          ['已驳回', this.auditStats?.rejected || 0],
+          ['累计提交', this.auditStats?.total || 0]
+        ]
+        : [
+          ['我的备课', this.myDocs.length],
+          ['草稿', this.myDocs.filter(d => d.review?.status === 'draft' || !d.review?.status).length],
+          ['待审核', this.myDocs.filter(d => d.review?.status === 'submitted').length],
+          ['已通过', this.myDocs.filter(d => d.review?.status === 'approved').length]
+        ]
+      const quick = isAuditRole
+        ? [['audit', '教研审核', '查看待审教案、AI初审参考与审核留痕'], ['stats', '数据台账', '查看完成率、参与率与迎检导出']]
+        : [['ai', 'AI 智能备课', '根据课题快速生成教学设计参考稿'], ['docs', '我的备课', '人工确认、版本管理、提交审核'], ['resources', '校本资源库', '查找和沉淀学校优质教学资源'], ['collab', '集体备课', '参与备课任务与协同讨论']]
+      body = el('div', {}, [
+        el('div', { class: 'k12-hero' }, [el('h2', {}, isAuditRole ? '教研管理工作台' : `欢迎回来，${this.actor || '老师'}`), el('p', {}, isAuditRole ? '集中处理待审核教案，查看学校备课过程与质量数据。' : '从 AI 智能备课开始，把重复工作交给 AI，把最终判断留给教师。')]),
+        el('div', { class: 'k12-overview' }, overview.map(([label, value]) => el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, label), el('div', { class: 'k12-num' }, String(value))]))),
+        el('div', { class: 'k12-section-title' }, '常用功能'),
+        el('div', { class: 'k12-module-grid' }, quick.map(([id, title, desc]) => el('div', { class: 'k12-card k12-module', onClick: () => this.switchTab(id) }, [el('strong', {}, title), el('div', { class: 'k12-meta' }, desc)])))
+      ])
+    } else if (!isAuditRole && this.tab === 'ai') {
       const aiCard = el('div', { class: 'k12-card' }, [
-        el('h4', {}, '第一步：AI生成教学设计参考稿'),
+        el('h4', {}, 'AI 智能备课：只负责生成参考稿'),
         el('div', { class: 'k12-row' }, [
           el('span', { class: 'k12-meta' }, 'AI模型'),
           el('select', { class: 'k12-select', value: this.aiSelectedModel, style: 'flex:1;min-width:180px', onChange: e => this.onAiModelChange(e.target.value) },
@@ -453,22 +512,41 @@ export default {
           el('div', { class: 'k12-row' }, [
             select(this.polishMode, v => (this.polishMode = v), ['润色', '精简', '扩写', '专业化', '分层建议']),
             btn('AI优化全文', () => this.aiPolishSelected(), 'ghost', this.loading),
-            btn('第二步：人工确认并存为草稿', () => this.saveAiAsDraft(), '', this.loading)
+            btn('存为草稿，去“我的备课”确认', () => this.saveAiAsDraft(), '', this.loading)
           ]),
           this.polishResult ? el('div', { class: 'k12-pre' }, this.polishResult) : null
-        ]) : el('div', { class: 'k12-meta' }, '输入单元或课题后点击生成，生成后逐节修改、确认再保存。')
+        ]) : el('div', { class: 'k12-meta' }, '输入单元或课题后点击生成。这里只生成参考稿，正式确认和提交请去“我的备课”。')
       ])
 
+      body = el('div', { class: 'k12-flex' }, [aiCard])
+    } else if (!isAuditRole && this.tab === 'docs') {
+      const draftCount = this.myDocsByStatus('draft').length
+      const approvedCount = this.myDocsByStatus('approved').length
+      const rejectedCount = this.myDocsByStatus('rejected').length
+      const docTabs = [
+        ['draft', `待提交（${draftCount}）`],
+        ['approved', `已通过（${approvedCount}）`],
+        ['rejected', `被驳回（${rejectedCount}）`]
+      ]
       const listCard = el('div', { class: 'k12-card' }, [
         el('h4', {}, `我的备课（${this.myDocs.length}）`),
+        el('div', { class: 'k12-meta' }, '这里是教师的正式备课档案：人工确认、版本留痕、提交审核都在这里完成。'),
+        el('div', { class: 'k12-tabs' }, docTabs.map(([key, label]) =>
+          el('button', { key, class: 'k12-tab' + (this.docFilter === key ? ' on' : ''), onClick: () => { this.docFilter = key } }, label)
+        )),
         el('div', { class: 'k12-row' }, [input(this.docQuery, v => (this.docQuery = v), '搜索标题/状态…')]),
-        el('div', { class: 'k12-list' }, this.filteredMyDocs().slice(0, 50).map(d =>
-          el('div', { key: d.id, class: 'k12-item' + (d.id === this.selectedDocId ? ' sel' : ''), onClick: () => this.openDoc(d.id) }, [
-            el('div', { style: 'font-weight:700;font-size:13px' }, d.title),
-            el('div', {}, [tag(d.status), tag(REVIEW_LABEL[d.review?.status] || d.review?.status || '草稿', d.review?.status === 'submitted' ? 'blue' : d.review?.status === 'approved' ? 'green' : d.review?.status === 'rejected' ? 'red' : ''), tag(`v${d.version}`)]),
-            el('div', { class: 'k12-meta' }, `${d.subject || ''} ${d.grade || ''} ${d.unit || ''} ｜ ${d.updatedAt ? d.updatedAt.slice(0, 16).replace('T', ' ') : ''}${d.review?.comment ? `\n教导意见：${d.review.comment}` : ''}`)
-          ])
-        ))
+        el('div', { class: 'k12-meta' }, this.docFilter === 'draft' ? '待提交：在此人工确认后提交教导审核。' : this.docFilter === 'approved' ? '已通过：教导已定稿，只能查看不可再改。' : '被驳回：按教导意见改完后可重新提交。'),
+        el('div', { class: 'k12-list' }, (() => {
+          const list = this.filteredMyDocs().slice(0, 50)
+          if (!list.length) return [el('div', { class: 'k12-meta' }, '该状态下暂无备课。去“AI 智能备课”生成后，会先进入待提交。')]
+          return list.map(d =>
+            el('div', { key: d.id, class: 'k12-item' + (d.id === this.selectedDocId ? ' sel' : ''), onClick: () => this.openDoc(d.id) }, [
+              el('div', { style: 'font-weight:700;font-size:13px' }, d.title),
+              el('div', {}, [tag(d.status), tag(REVIEW_LABEL[d.review?.status] || d.review?.status || '草稿', d.review?.status === 'submitted' ? 'blue' : d.review?.status === 'approved' ? 'green' : d.review?.status === 'rejected' ? 'red' : ''), tag(`v${d.version}`)]),
+              el('div', { class: 'k12-meta' }, `${d.subject || ''} ${d.grade || ''} ${d.unit || ''} ｜ ${d.updatedAt ? d.updatedAt.slice(0, 16).replace('T', ' ') : ''}${d.review?.comment ? `\n教导意见：${d.review.comment}` : ''}`)
+            ])
+          )
+        })())
       ])
 
       const detailCard = el('div', { class: 'k12-card' }, !this.selectedDoc ? el('div', { class: 'k12-meta' }, '请选择一篇备课，人工确认内容后提交审核。') : [
@@ -500,8 +578,32 @@ export default {
         el('div', { class: 'k12-meta' }, `操作留痕：` + this.traces.slice(0, 5).map(t => `${t.action}@${(t.at || '').slice(5, 16)}`).join(' ｜ '))
       ])
 
-      body = el('div', { class: 'k12-flex' }, [aiCard, listCard, detailCard])
-    } else {
+      body = el('div', { class: 'k12-flex' }, [listCard, detailCard])
+    } else if (!isAuditRole && (this.tab === 'resources' || this.tab === 'collab')) {
+      const info = this.tab === 'resources'
+        ? ['校本资源库', '按学段 / 学科 / 年级 / 教材 / 单元查找学校沉淀的优质备课资源，一键复用为个人草稿。']
+        : ['集体备课', '查看我参与的备课任务、协同讨论与版本留痕，按任务进入文档继续备课。']
+      body = el('div', { class: 'k12-card' }, [
+        el('h4', {}, info[0]),
+        el('div', { class: 'k12-meta' }, info[1]),
+        el('div', { class: 'k12-row' }, [input(this.tab === 'resources' ? this.docQuery : this.queueQuery, v => { if (this.tab === 'resources') this.docQuery = v; else this.queueQuery = v }, this.tab === 'resources' ? '搜索资源标题 / 知识点…' : '搜索任务 / 参与人…')]),
+        el('div', { class: 'k12-pre', style: 'margin-top:12px' }, '该模块已纳入教师工作台，后续会在独立页面展开资源分类、任务看板与协同编辑，避免与 AI 生成混在同一屏。')
+      ])
+    } else if (isAuditRole && this.tab === 'stats') {
+      body = el('div', {}, [
+        this.auditStats ? el('div', { class: 'k12-stat' }, [
+          el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, '累计提交'), el('div', { class: 'k12-num' }, String(this.auditStats.total))]),
+          el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, '待审核'), el('div', { class: 'k12-num' }, String(this.auditStats.submitted))]),
+          el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, '已通过'), el('div', { class: 'k12-num' }, String(this.auditStats.approved))]),
+          el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, `通过率 ${this.auditStats.approveRate}%`), el('div', { class: 'k12-num' }, String(this.auditStats.rejected))])
+        ]) : el('div', { class: 'k12-meta' }, '暂无统计数据'),
+        el('div', { class: 'k12-card' }, [
+          el('h4', {}, '迎检台账导出'),
+          el('div', { class: 'k12-meta' }, '备课任务台账、完成台账、研讨记录台账与校本资源清单将在此一键导出为标准化文档，可直接上交教育局。'),
+          el('div', { class: 'k12-row' }, [btn('导出备课台账（Excel）', () => this.pluginApi.showToast('台账导出将在独立报表模块提供', 'info'), 'ghost'), btn('导出迎检材料包', () => this.pluginApi.showToast('迎检材料包将在独立报表模块提供', 'info'), 'ghost')])
+        ])
+      ])
+    } else if (isAuditRole && this.tab === 'audit') {
       const statsBar = this.auditStats ? el('div', { class: 'k12-stat' }, [
         el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, '待审核'), el('div', { class: 'k12-num' }, String(this.auditStats.submitted))]),
         el('div', { class: 'k12-card' }, [el('div', { class: 'k12-meta' }, '已通过'), el('div', { class: 'k12-num' }, String(this.auditStats.approved))]),
@@ -546,11 +648,14 @@ export default {
       ])
 
       body = el('div', {}, [statsBar, el('div', { class: 'k12-flex' }, [queueCard, auditCard])])
+    } else {
+      body = el('div', { class: 'k12-card' }, el('div', { class: 'k12-meta' }, '当前身份暂无该模块权限，已自动返回工作台。'))
     }
 
     return el('div', { class: 'k12-wrap' }, [
-      header, steps, tabs, body,
-      el('div', { class: 'k12-meta', style: 'margin-top:12px' }, '闭环说明：AI生成均为参考草稿，老师必须逐节人工确认；提交时自动校验模板必填项；教导驳回必须写意见；通过即定稿锁定；全部版本与操作永久留痕。')
+      header,
+      el('div', { class: 'k12-shell' }, [sidebar, el('main', { class: 'k12-main' }, [steps, body])]),
+      el('div', { class: 'k12-meta', style: 'margin-top:12px' }, 'AI结果仅为备课参考，必须人工确认后提交；审核意见、版本和操作全程留痕。')
     ])
   }
 }
